@@ -1,0 +1,648 @@
+                  2   $LIST
+0000              4   
+0000              5   org 0000H
+0000 020446       6      ljmp MyProgram
+0003              7      
+0003              8   ; Timer/Counter 2 overflow interrupt vector
+002B              9   org 0x002B
+002B 02042E      10            ljmp Timer2_ISR
+002E             11   
+002E             12   ; These register definitions needed by 'math32.inc'
+0030             13   DSEG at 30H
+0030             14   x:   ds 4
+0034             15   y:   ds 4
+0038             16   bcd: ds 5
+003D             17   T2ov: ds 2 ; 16-bit timer 2 overflow (to measure the period of very slow signals)
+003F             18   
+0000             19   BSEG
+0000             20   mf: dbit 1
+0001             21   erics_flag: dbit 1
+0002             22   
+0002             23   DEBOUNCE_DELAY   equ     50
+0002             24   
+                570   $LIST
+                 27   $LIST
+02C4             29   
+02C4             30   cseg
+02C4             31   ; These 'equ' must match the hardware wiring
+02C4             32   LCD_RS equ P3.2
+02C4             33   ;LCD_RW equ PX.X ; Not used in this code, connect the pin to GND
+02C4             34   LCD_E  equ P3.3
+02C4             35   LCD_D4 equ P3.4
+02C4             36   LCD_D5 equ P3.5
+02C4             37   LCD_D6 equ P3.6
+02C4             38   LCD_D7 equ P3.7
+02C4             39   
+                 41   	$LIST
+0370             43   
+0370             44   ;                     1234567890123456    <- This helps determine the location of the counter
+0370 43617061    45   Initial_Message:  db 'Capacitance (nF):   ', 0
+     63697461
+     6E636520
+     286E4629
+     3A202020
+     00
+0385 4572726F    46   First_State_Message: db 'Error: 0%        ', 0
+     723A2030
+     25202020
+     20202020
+     2000
+0397 4572726F    47   Second_State_Message: db 'Error: 9%        ', 0
+     723A2039
+     25202020
+     20202020
+     2000
+03A9 4572726F    48   Third_State_Message: db 'Error: 5.7%       ', 0
+     723A2035
+     2E372520
+     20202020
+     202000
+03BC 4572726F    49   Fourth_State_Message: db 'Error: 1.5%       ', 0
+     723A2031
+     2E352520
+     20202020
+     202000
+03CF 4572726F    50   Fifth_State_Message: db 'Error: 10.95%       ', 0
+     723A2031
+     302E3935
+     25202020
+     20202020
+     00
+03E4             51   
+03E4 4E6F2073    52   No_Signal_Str:    db 'No signal      ', 0
+     69676E61
+     6C202020
+     20202000
+03F4             53   
+03F4             54   ; Sends 10-digit BCD number in bcd to the LCD
+03F4             55   Display_10_digit_BCD:
+03F4 C000        56            push ar0
+03F6 A83C        56            mov r0, bcd+4
+03F8 12035A      56            lcall ?Display_BCD
+03FB D000        56            pop ar0
+03FD C000        57            push ar0
+03FF A83B        57            mov r0, bcd+3
+0401 12035A      57            lcall ?Display_BCD
+0404 D000        57            pop ar0
+0406 C000        58            push ar0
+0408 A83A        58            mov r0, bcd+2
+040A 12035A      58            lcall ?Display_BCD
+040D D000        58            pop ar0
+040F C000        59            push ar0
+0411 A839        59            mov r0, bcd+1
+0413 12035A      59            lcall ?Display_BCD
+0416 D000        59            pop ar0
+0418 C000        60            push ar0
+041A A838        60            mov r0, bcd+0
+041C 12035A      60            lcall ?Display_BCD
+041F D000        60            pop ar0
+0421 22          61            ret
+0422             62   
+0422             63   ;Initializes timer/counter 2 as a 16-bit timer
+0422             64   InitTimer2:
+0422 75C800      65            mov T2CON, #0 ; Stop timer/counter.  Set as timer (clock input is pin 22.1184MHz).
+0425             66            ; Set the reload value on overflow to zero (just in case is not zero)
+0425 75CB00      67            mov RCAP2H, #0
+0428 75CA00      68            mov RCAP2L, #0
+042B D2AD        69            setb ET2
+042D 22          70       ret
+042E             71   
+042E             72   Timer2_ISR:
+042E C2CF        73            clr TF2  ; Timer 2 doesn't clear TF2 automatically. Do it in ISR
+0430 C0E0        74            push acc
+0432 053D        75            inc T2ov+0
+0434 E53D        76            mov a, T2ov+0
+0436 7002        77            jnz Timer2_ISR_done
+0438 053E        78            inc T2ov+1
+043A             79   Timer2_ISR_done:
+043A D0E0        80            pop acc
+043C 32          81            reti
+043D             82   
+043D             83   ;---------------------------------;
+043D             84   ; Hardware initialization         ;
+043D             85   ;---------------------------------;
+043D             86   Initialize_All:
+043D 120422      87       lcall InitTimer2
+0440 12031E      88       lcall LCD_4BIT ; Initialize LCD
+0443 D2AF        89       setb EA
+0445 22          90            ret
+0446             91   
+0446             92   ;---------------------------------;
+0446             93   ; Main program loop               ;
+0446             94   ;---------------------------------;
+0446             95   MyProgram:
+0446             96       ; Initialize the hardware:
+0446 75817F      97       mov SP, #7FH
+0449 12043D      98       lcall Initialize_All
+044C D280        99       setb P0.0 ; Pin is used as input
+044E            100   
+044E C0E0       101            push acc
+0450 7401       101            mov a, #1
+0452 14         101            dec a
+0453 120355     101            lcall ?Set_Cursor_1 ; Select column and row
+0456 D0E0       101            pop acc
+0458 C083       102            push dph
+045A C082       102            push dpl
+045C C0E0       102            push acc
+045E 900370     102            mov dptr, #Initial_Message
+0461 120348     102            lcall ?Send_Constant_String
+0464 D0E0       102            pop acc
+0466 D082       102            pop dpl
+0468 D083       102            pop dph
+046A            103       
+046A            104   forever:
+046A            105       ; synchronize with rising edge of the signal applied to pin P0.0
+046A C2CA       106       clr TR2 ; Stop timer 2
+046C 75CC00     107       mov TL2, #0
+046F 75CD00     108       mov TH2, #0
+0472 753D00     109       mov T2ov+0, #0
+0475 753E00     110       mov T2ov+1, #0
+0478 C2CF       111       clr TF2
+047A D2CA       112       setb TR2
+047C            113   synch1:
+047C E53E       114            mov a, T2ov+1
+047E 54FE       115            anl a, #0xfe
+0480 7034       116            jnz no_signal ; If the count is larger than 0x01ffffffff*45ns=1.16s, we assume there is no signal
+0482 2080F7     117       jb P0.0, synch1
+0485            118   synch2:    
+0485 E53E       119            mov a, T2ov+1
+0487 54FE       120            anl a, #0xfe
+0489 702B       121            jnz no_signal
+048B 3080F7     122       jnb P0.0, synch2
+048E            123       
+048E            124       ; Measure the period of the signal applied to pin P0.0
+048E C2CA       125       clr TR2
+0490 75CC00     126       mov TL2, #0
+0493 75CD00     127       mov TH2, #0
+0496 753D00     128       mov T2ov+0, #0
+0499 753E00     129       mov T2ov+1, #0
+049C C2CF       130       clr TF2
+049E D2CA       131       setb TR2 ; Start timer 2
+04A0            132   measure1:
+04A0 E53E       133            mov a, T2ov+1
+04A2 54FE       134            anl a, #0xfe
+04A4 7010       135            jnz no_signal 
+04A6 2080F7     136       jb P0.0, measure1
+04A9            137   measure2:    
+04A9 E53E       138            mov a, T2ov+1
+04AB 54FE       139            anl a, #0xfe
+04AD 7007       140            jnz no_signal
+04AF 3080F7     141       jnb P0.0, measure2
+04B2 C2CA       142       clr TR2 ; Stop timer 2, [T2ov+1, T2ov+0, TH2, TL2] * 45.21123ns is the period
+04B4            143   
+04B4 801F       144            sjmp skip_this
+04B6            145   no_signal:       
+04B6 C0E0       146            push acc
+04B8 7401       146            mov a, #1
+04BA 14         146            dec a
+04BB 120353     146            lcall ?Set_Cursor_2 ; Select column and row
+04BE D0E0       146            pop acc
+04C0 C083       147            push dph
+04C2 C082       147            push dpl
+04C4 C0E0       147            push acc
+04C6 9003E4     147            mov dptr, #No_Signal_Str
+04C9 120348     147            lcall ?Send_Constant_String
+04CC D0E0       147            pop acc
+04CE D082       147            pop dpl
+04D0 D083       147            pop dph
+04D2 02046A     148       ljmp forever ; Repeat! 
+04D5            149           
+04D5            150    
+04D5            151   skip_this:
+04D5            152   
+04D5            153            ; Make sure [T2ov+1, T2ov+2, TH2, TL2]!=0
+04D5 E5CC       154            mov a, TL2
+04D7 45CD       155            orl a, TH2
+04D9 453D       156            orl a, T2ov+0
+04DB 453E       157            orl a, T2ov+1
+04DD 60D7       158            jz no_signal
+04DF            159            ; Using integer math, convert the period to frequency:
+04DF 85CC30     160            mov x+0, TL2
+04E2 85CD31     161            mov x+1, TH2
+04E5 853D32     162            mov x+2, T2ov+0
+04E8 853E33     163            mov x+3, T2ov+1
+04EB 75342D     164            mov y+0, #low (45 % 0x10000) 
+04EE 753500     164            mov y+1, #high(45 % 0x10000) 
+04F1 753600     164            mov y+2, #low (45 / 0x10000) 
+04F4 753700     164            mov y+3, #high(45 / 0x10000)  ; One clock pulse is 1/22.1184MHz=45.21123ns
+04F7 1201A8     165            lcall mul32
+04FA            166            
+04FA            167            
+04FA 753464     168            mov y+0, #low (100 % 0x10000) 
+04FD 753500     168            mov y+1, #high(100 % 0x10000) 
+0500 753600     168            mov y+2, #low (100 / 0x10000) 
+0503 753700     168            mov y+3, #high(100 / 0x10000) 
+0506 120235     169            lcall div32 ;divide by 100 to make period smaller (no overflow)
+0509            170            
+0509 753490     171            mov y+0, #low (144 % 0x10000) 
+050C 753500     171            mov y+1, #high(144 % 0x10000) 
+050F 753600     171            mov y+2, #low (144 / 0x10000) 
+0512 753700     171            mov y+3, #high(144 / 0x10000) ; cannot use decimals so use 144 and divide by 100 later
+0515 1201A8     172            lcall mul32 ; multiplies the period by 144. period is stored in "x"
+0518 753464     173            mov y+0, #low (100 % 0x10000) 
+051B 753500     173            mov y+1, #high(100 % 0x10000) 
+051E 753600     173            mov y+2, #low (100 / 0x10000) 
+0521 753700     173            mov y+3, #high(100 / 0x10000)  
+0524 120235     174            lcall div32
+0527 7534FC     175            mov y+0, #low (1020 % 0x10000) 
+052A 753503     175            mov y+1, #high(1020 % 0x10000) 
+052D 753600     175            mov y+2, #low (1020 / 0x10000) 
+0530 753700     175            mov y+3, #high(1020 / 0x10000) 
+0533 120235     176            lcall div32
+0536            177            
+0536 753464     178            mov y+0, #low (100 % 0x10000) 
+0539 753500     178            mov y+1, #high(100 % 0x10000) 
+053C 753600     178            mov y+2, #low (100 / 0x10000) 
+053F 753700     178            mov y+3, #high(100 / 0x10000) 
+0542 1201A8     179            lcall mul32 ;multiply back the 100 for original
+0545            180            
+0545 7534C8     181            mov y+0, #low (200 % 0x10000) 
+0548 753500     181            mov y+1, #high(200 % 0x10000) 
+054B 753600     181            mov y+2, #low (200 / 0x10000) 
+054E 753700     181            mov y+3, #high(200 / 0x10000)     ;setting states now
+0551 120136     182            lcall x_lt_y
+0554 200054     183            jb mf, Subroutine1
+0557            184            
+0557 753410     185            mov y+0, #low (10000 % 0x10000) 
+055A 753527     185            mov y+1, #high(10000 % 0x10000) 
+055D 753600     185            mov y+2, #low (10000 / 0x10000) 
+0560 753700     185            mov y+3, #high(10000 / 0x10000) 
+0563 120136     186            lcall x_lt_y
+0566 200036     187            jb mf, Subroutine2_a
+0569            188            
+0569 7534A0     189            mov y+0, #low (100000 % 0x10000) 
+056C 753586     189            mov y+1, #high(100000 % 0x10000) 
+056F 753601     189            mov y+2, #low (100000 / 0x10000) 
+0572 753700     189            mov y+3, #high(100000 / 0x10000) 
+0575 120136     190            lcall x_lt_y
+0578 200027     191            jb mf, Subroutine3_a
+057B            192            
+057B 753480     193            mov y+0, #low (240000 % 0x10000) 
+057E 7535A9     193            mov y+1, #high(240000 % 0x10000) 
+0581 753603     193            mov y+2, #low (240000 / 0x10000) 
+0584 753700     193            mov y+3, #high(240000 / 0x10000) 
+0587 120136     194            lcall x_lt_y
+058A 200018     195            jb mf, Subroutine4_a
+058D            196            
+058D 753440     197            mov y+0, #low (1000000 % 0x10000) 
+0590 753542     197            mov y+1, #high(1000000 % 0x10000) 
+0593 75360F     197            mov y+2, #low (1000000 / 0x10000) 
+0596 753700     197            mov y+3, #high(1000000 / 0x10000) 
+0599 120136     198            lcall x_lt_y
+059C 200009     199            jb mf, Subroutine5_a
+059F            200   
+059F            201            ; Convert the result to BCD and display on LCD
+059F            202            ;Set_Cursor(2, 1)
+059F            203            ;lcall hex2bcd
+059F            204            ;lcall Display_10_digit_BCD
+059F            205       ;ljmp forever ; Repeat! 
+059F            206       
+059F            207   Subroutine2_a: ;bridge cuz this program is stupid asf
+059F 02062E     208            ljmp Subroutine2
+05A2            209            
+05A2            210            
+05A2            211   Subroutine3_a: ;bridge cuz this program is stupid asf
+05A2 0206B1     212            ljmp Subroutine3
+05A5            213            
+05A5            214   Subroutine4_a:   ;bridge cuz this program is stupid asf
+05A5 020734     215            ljmp Subroutine4
+05A8            216            
+05A8            217   Subroutine5_a:   ;bridge cuz this program is stupid asf
+05A8 0207D2     218            ljmp Subroutine5        
+05AB            219   
+05AB            220   
+05AB            221   Subroutine1:
+05AB            222            
+05AB C0E0       223            push acc
+05AD 7401       223            mov a, #1
+05AF 14         223            dec a
+05B0 120355     223            lcall ?Set_Cursor_1 ; Select column and row
+05B3 D0E0       223            pop acc
+05B5 C083       224            push dph
+05B7 C082       224            push dpl
+05B9 C0E0       224            push acc
+05BB 900370     224            mov dptr, #Initial_Message
+05BE 120348     224            lcall ?Send_Constant_String
+05C1 D0E0       224            pop acc
+05C3 D082       224            pop dpl
+05C5 D083       224            pop dph
+05C7 C0E0       225            push acc
+05C9 7401       225            mov a, #1
+05CB 14         225            dec a
+05CC 120353     225            lcall ?Set_Cursor_2 ; Select column and row
+05CF D0E0       225            pop acc
+05D1 12002E     226            lcall hex2bcd
+05D4 1203F4     227            lcall Display_10_digit_BCD
+05D7            228       
+05D7 C200       229       clr mf
+05D9 C002       230            push AR2
+05DB 7A32       230            mov R2, #DEBOUNCE_DELAY
+05DD 1202CF     230            lcall ?Wait_Milli_Seconds
+05E0 D002       230            pop AR2
+05E2 C002       231            push AR2
+05E4 7A32       231            mov R2, #DEBOUNCE_DELAY
+05E6 1202CF     231            lcall ?Wait_Milli_Seconds
+05E9 D002       231            pop AR2
+05EB C002       232            push AR2
+05ED 7A32       232            mov R2, #DEBOUNCE_DELAY
+05EF 1202CF     232            lcall ?Wait_Milli_Seconds
+05F2 D002       232            pop AR2
+05F4            233       
+05F4            234           
+05F4 C0E0       235            push acc
+05F6 7401       235            mov a, #1
+05F8 14         235            dec a
+05F9 120355     235            lcall ?Set_Cursor_1 ; Select column and row
+05FC D0E0       235            pop acc
+05FE C083       236            push dph
+0600 C082       236            push dpl
+0602 C0E0       236            push acc
+0604 900385     236            mov dptr, #First_State_Message
+0607 120348     236            lcall ?Send_Constant_String
+060A D0E0       236            pop acc
+060C D082       236            pop dpl
+060E D083       236            pop dph
+0610 C002       237            push AR2
+0612 7A32       237            mov R2, #DEBOUNCE_DELAY
+0614 1202CF     237            lcall ?Wait_Milli_Seconds
+0617 D002       237            pop AR2
+0619 C002       238            push AR2
+061B 7A32       238            mov R2, #DEBOUNCE_DELAY
+061D 1202CF     238            lcall ?Wait_Milli_Seconds
+0620 D002       238            pop AR2
+0622 C002       239            push AR2
+0624 7A32       239            mov R2, #DEBOUNCE_DELAY
+0626 1202CF     239            lcall ?Wait_Milli_Seconds
+0629 D002       239            pop AR2
+062B 02046A     240       ljmp forever ; Repeat! 
+062E            241       
+062E            242   Subroutine2:
+062E            243   
+062E C0E0       244            push acc
+0630 7401       244            mov a, #1
+0632 14         244            dec a
+0633 120355     244            lcall ?Set_Cursor_1 ; Select column and row
+0636 D0E0       244            pop acc
+0638 C083       245            push dph
+063A C082       245            push dpl
+063C C0E0       245            push acc
+063E 900370     245            mov dptr, #Initial_Message
+0641 120348     245            lcall ?Send_Constant_String
+0644 D0E0       245            pop acc
+0646 D082       245            pop dpl
+0648 D083       245            pop dph
+064A C0E0       246            push acc
+064C 7401       246            mov a, #1
+064E 14         246            dec a
+064F 120353     246            lcall ?Set_Cursor_2 ; Select column and row
+0652 D0E0       246            pop acc
+0654 12002E     247            lcall hex2bcd
+0657 1203F4     248            lcall Display_10_digit_BCD
+065A            249       
+065A C200       250       clr mf
+065C C002       251            push AR2
+065E 7A32       251            mov R2, #DEBOUNCE_DELAY
+0660 1202CF     251            lcall ?Wait_Milli_Seconds
+0663 D002       251            pop AR2
+0665 C002       252            push AR2
+0667 7A32       252            mov R2, #DEBOUNCE_DELAY
+0669 1202CF     252            lcall ?Wait_Milli_Seconds
+066C D002       252            pop AR2
+066E C002       253            push AR2
+0670 7A32       253            mov R2, #DEBOUNCE_DELAY
+0672 1202CF     253            lcall ?Wait_Milli_Seconds
+0675 D002       253            pop AR2
+0677            254       
+0677 C0E0       255            push acc
+0679 7401       255            mov a, #1
+067B 14         255            dec a
+067C 120355     255            lcall ?Set_Cursor_1 ; Select column and row
+067F D0E0       255            pop acc
+0681 C083       256            push dph
+0683 C082       256            push dpl
+0685 C0E0       256            push acc
+0687 900397     256            mov dptr, #Second_State_Message
+068A 120348     256            lcall ?Send_Constant_String
+068D D0E0       256            pop acc
+068F D082       256            pop dpl
+0691 D083       256            pop dph
+0693 C002       257            push AR2
+0695 7A32       257            mov R2, #DEBOUNCE_DELAY
+0697 1202CF     257            lcall ?Wait_Milli_Seconds
+069A D002       257            pop AR2
+069C C002       258            push AR2
+069E 7A32       258            mov R2, #DEBOUNCE_DELAY
+06A0 1202CF     258            lcall ?Wait_Milli_Seconds
+06A3 D002       258            pop AR2
+06A5 C002       259            push AR2
+06A7 7A32       259            mov R2, #DEBOUNCE_DELAY
+06A9 1202CF     259            lcall ?Wait_Milli_Seconds
+06AC D002       259            pop AR2
+06AE 02046A     260       ljmp forever ; Repeat! 
+06B1            261       
+06B1            262   Subroutine3:
+06B1            263   
+06B1 C0E0       264            push acc
+06B3 7401       264            mov a, #1
+06B5 14         264            dec a
+06B6 120355     264            lcall ?Set_Cursor_1 ; Select column and row
+06B9 D0E0       264            pop acc
+06BB C083       265            push dph
+06BD C082       265            push dpl
+06BF C0E0       265            push acc
+06C1 900370     265            mov dptr, #Initial_Message
+06C4 120348     265            lcall ?Send_Constant_String
+06C7 D0E0       265            pop acc
+06C9 D082       265            pop dpl
+06CB D083       265            pop dph
+06CD C0E0       266            push acc
+06CF 7401       266            mov a, #1
+06D1 14         266            dec a
+06D2 120353     266            lcall ?Set_Cursor_2 ; Select column and row
+06D5 D0E0       266            pop acc
+06D7 12002E     267            lcall hex2bcd
+06DA 1203F4     268            lcall Display_10_digit_BCD
+06DD            269       
+06DD C200       270       clr mf
+06DF C002       271            push AR2
+06E1 7A32       271            mov R2, #DEBOUNCE_DELAY
+06E3 1202CF     271            lcall ?Wait_Milli_Seconds
+06E6 D002       271            pop AR2
+06E8 C002       272            push AR2
+06EA 7A32       272            mov R2, #DEBOUNCE_DELAY
+06EC 1202CF     272            lcall ?Wait_Milli_Seconds
+06EF D002       272            pop AR2
+06F1 C002       273            push AR2
+06F3 7A32       273            mov R2, #DEBOUNCE_DELAY
+06F5 1202CF     273            lcall ?Wait_Milli_Seconds
+06F8 D002       273            pop AR2
+06FA            274       
+06FA C0E0       275            push acc
+06FC 7401       275            mov a, #1
+06FE 14         275            dec a
+06FF 120355     275            lcall ?Set_Cursor_1 ; Select column and row
+0702 D0E0       275            pop acc
+0704 C083       276            push dph
+0706 C082       276            push dpl
+0708 C0E0       276            push acc
+070A 9003A9     276            mov dptr, #Third_State_Message
+070D 120348     276            lcall ?Send_Constant_String
+0710 D0E0       276            pop acc
+0712 D082       276            pop dpl
+0714 D083       276            pop dph
+0716 C002       277            push AR2
+0718 7A32       277            mov R2, #DEBOUNCE_DELAY
+071A 1202CF     277            lcall ?Wait_Milli_Seconds
+071D D002       277            pop AR2
+071F C002       278            push AR2
+0721 7A32       278            mov R2, #DEBOUNCE_DELAY
+0723 1202CF     278            lcall ?Wait_Milli_Seconds
+0726 D002       278            pop AR2
+0728 C002       279            push AR2
+072A 7A32       279            mov R2, #DEBOUNCE_DELAY
+072C 1202CF     279            lcall ?Wait_Milli_Seconds
+072F D002       279            pop AR2
+0731 02046A     280       ljmp forever ; Repeat! 
+0734            281       
+0734            282   Subroutine4:
+0734            283   
+0734 C0E0       284            push acc
+0736 7401       284            mov a, #1
+0738 14         284            dec a
+0739 120355     284            lcall ?Set_Cursor_1 ; Select column and row
+073C D0E0       284            pop acc
+073E C083       285            push dph
+0740 C082       285            push dpl
+0742 C0E0       285            push acc
+0744 900370     285            mov dptr, #Initial_Message
+0747 120348     285            lcall ?Send_Constant_String
+074A D0E0       285            pop acc
+074C D082       285            pop dpl
+074E D083       285            pop dph
+0750 C0E0       286            push acc
+0752 7401       286            mov a, #1
+0754 14         286            dec a
+0755 120353     286            lcall ?Set_Cursor_2 ; Select column and row
+0758 D0E0       286            pop acc
+075A 12002E     287            lcall hex2bcd
+075D 1203F4     288            lcall Display_10_digit_BCD
+0760            289       
+0760 C200       290       clr mf
+0762 C002       291            push AR2
+0764 7A32       291            mov R2, #DEBOUNCE_DELAY
+0766 1202CF     291            lcall ?Wait_Milli_Seconds
+0769 D002       291            pop AR2
+076B C002       292            push AR2
+076D 7A32       292            mov R2, #DEBOUNCE_DELAY
+076F 1202CF     292            lcall ?Wait_Milli_Seconds
+0772 D002       292            pop AR2
+0774 C002       293            push AR2
+0776 7A32       293            mov R2, #DEBOUNCE_DELAY
+0778 1202CF     293            lcall ?Wait_Milli_Seconds
+077B D002       293            pop AR2
+077D C002       294            push AR2
+077F 7A32       294            mov R2, #DEBOUNCE_DELAY
+0781 1202CF     294            lcall ?Wait_Milli_Seconds
+0784 D002       294            pop AR2
+0786 C002       295            push AR2
+0788 7A32       295            mov R2, #DEBOUNCE_DELAY
+078A 1202CF     295            lcall ?Wait_Milli_Seconds
+078D D002       295            pop AR2
+078F C002       296            push AR2
+0791 7A32       296            mov R2, #DEBOUNCE_DELAY
+0793 1202CF     296            lcall ?Wait_Milli_Seconds
+0796 D002       296            pop AR2
+0798            297       
+0798 C0E0       298            push acc
+079A 7401       298            mov a, #1
+079C 14         298            dec a
+079D 120355     298            lcall ?Set_Cursor_1 ; Select column and row
+07A0 D0E0       298            pop acc
+07A2 C083       299            push dph
+07A4 C082       299            push dpl
+07A6 C0E0       299            push acc
+07A8 9003BC     299            mov dptr, #Fourth_State_Message
+07AB 120348     299            lcall ?Send_Constant_String
+07AE D0E0       299            pop acc
+07B0 D082       299            pop dpl
+07B2 D083       299            pop dph
+07B4 C002       300            push AR2
+07B6 7A32       300            mov R2, #DEBOUNCE_DELAY
+07B8 1202CF     300            lcall ?Wait_Milli_Seconds
+07BB D002       300            pop AR2
+07BD C002       301            push AR2
+07BF 7A32       301            mov R2, #DEBOUNCE_DELAY
+07C1 1202CF     301            lcall ?Wait_Milli_Seconds
+07C4 D002       301            pop AR2
+07C6 C002       302            push AR2
+07C8 7A32       302            mov R2, #DEBOUNCE_DELAY
+07CA 1202CF     302            lcall ?Wait_Milli_Seconds
+07CD D002       302            pop AR2
+07CF 02046A     303       ljmp forever ; Repeat! 
+07D2            304       
+07D2            305       
+07D2            306   Subroutine5:
+07D2            307   
+07D2 C0E0       308            push acc
+07D4 7401       308            mov a, #1
+07D6 14         308            dec a
+07D7 120355     308            lcall ?Set_Cursor_1 ; Select column and row
+07DA D0E0       308            pop acc
+07DC C083       309            push dph
+07DE C082       309            push dpl
+07E0 C0E0       309            push acc
+07E2 900370     309            mov dptr, #Initial_Message
+07E5 120348     309            lcall ?Send_Constant_String
+07E8 D0E0       309            pop acc
+07EA D082       309            pop dpl
+07EC D083       309            pop dph
+07EE C0E0       310            push acc
+07F0 7401       310            mov a, #1
+07F2 14         310            dec a
+07F3 120353     310            lcall ?Set_Cursor_2 ; Select column and row
+07F6 D0E0       310            pop acc
+07F8 12002E     311            lcall hex2bcd
+07FB 1203F4     312            lcall Display_10_digit_BCD
+07FE            313       
+07FE C200       314       clr mf
+0800 C002       315            push AR2
+0802 7A32       315            mov R2, #DEBOUNCE_DELAY
+0804 1202CF     315            lcall ?Wait_Milli_Seconds
+0807 D002       315            pop AR2
+0809 C002       316            push AR2
+080B 7A32       316            mov R2, #DEBOUNCE_DELAY
+080D 1202CF     316            lcall ?Wait_Milli_Seconds
+0810 D002       316            pop AR2
+0812 C002       317            push AR2
+0814 7A32       317            mov R2, #DEBOUNCE_DELAY
+0816 1202CF     317            lcall ?Wait_Milli_Seconds
+0819 D002       317            pop AR2
+081B            318       
+081B C0E0       319            push acc
+081D 7401       319            mov a, #1
+081F 14         319            dec a
+0820 120355     319            lcall ?Set_Cursor_1 ; Select column and row
+0823 D0E0       319            pop acc
+0825 C083       320            push dph
+0827 C082       320            push dpl
+0829 C0E0       320            push acc
+082B 9003CF     320            mov dptr, #Fifth_State_Message
+082E 120348     320            lcall ?Send_Constant_String
+0831 D0E0       320            pop acc
+0833 D082       320            pop dpl
+0835 D083       320            pop dph
+0837 C002       321            push AR2
+0839 7A32       321            mov R2, #DEBOUNCE_DELAY
+083B 1202CF     321            lcall ?Wait_Milli_Seconds
+083E D002       321            pop AR2
+0840 C002       322            push AR2
+0842 7A32       322            mov R2, #DEBOUNCE_DELAY
+0844 1202CF     322            lcall ?Wait_Milli_Seconds
+0847 D002       322            pop AR2
+0849 C002       323            push AR2
+084B 7A32       323            mov R2, #DEBOUNCE_DELAY
+084D 1202CF     323            lcall ?Wait_Milli_Seconds
+0850 D002       323            pop AR2
+0852 02046A     324       ljmp forever ; Repeat! 
+0855            325   
+0855            326   en
